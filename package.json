@@ -1,0 +1,22 @@
+{
+  "name": "cbrain",
+  "version": "0.1.0",
+  "description": "Christian's Brain — personal knowledge OS for Claude Code",
+  "bin": {
+    "cbrain": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "build": "bun build src/cli.ts --outfile dist/cbrain --target bun --compile"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "commander": "^12.0.0",
+    "gray-matter": "^4.0.3",
+    "openai": "^4.76.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "trustedDependencies": []
+}
