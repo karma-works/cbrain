@@ -17,28 +17,35 @@ const INGEST_PATTERNS = [
   /README\.md$/,
 ];
 
-export async function runHookSessionEnd() {
-  const config = loadConfig();
-  if (!config.capture_enabled) return;
+export async function runHookSessionStart(opts: { agent?: string } = {}) {
+  if (opts.agent !== 'codex') return;
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: [
+        'cbrain is available for persistent project memory.',
+        'For substantial work, use cbrain-session-load or run `cbrain search "<project> recent decisions"` before relying on user recall.',
+        'When durable decisions or solved problems emerge, store them with cbrain-decision-log, cbrain-session-capture, or `cbrain write`.',
+      ].join(' '),
+    },
+  }));
+}
 
-  // Read hook event data from stdin (Claude Code sends JSON)
-  let hookData: any = {};
-  try {
-    if (!process.stdin.isTTY) {
-      const chunks: Buffer[] = [];
-      for await (const chunk of Bun.stdin.stream()) chunks.push(Buffer.from(chunk));
-      const raw = Buffer.concat(chunks).toString('utf8').trim();
-      if (raw) hookData = JSON.parse(raw);
-    }
-  } catch { /* ignore parse errors */ }
+export async function runHookSessionEnd(opts: { agent?: string } = {}) {
+  const config = loadConfig();
+  if (!config.capture_enabled) return writeStopSuccess(opts.agent);
+
+  const hookData = await readHookJson();
 
   const numTurns = hookData.num_turns ?? hookData.numTurns ?? 99;
-  if (numTurns < config.capture_min_turns) return;
+  if (numTurns < config.capture_min_turns) return writeStopSuccess(opts.agent);
 
   // Debounce check
   const lastCapture = loadCaptureState();
   const now = Date.now();
-  if (lastCapture && (now - lastCapture) < config.capture_debounce_minutes * 60 * 1000) return;
+  if (lastCapture && (now - lastCapture) < config.capture_debounce_minutes * 60 * 1000) {
+    return writeStopSuccess(opts.agent);
+  }
 
   // Write to session queue so session-load picks it up next time
   ensureDir(SESSION_QUEUE_DIR);
@@ -46,7 +53,9 @@ export async function runHookSessionEnd() {
     timestamp: now,
     session_id: hookData.session_id ?? 'unknown',
     num_turns: numTurns,
-    cwd: process.cwd(),
+    cwd: hookData.cwd ?? process.cwd(),
+    transcript_path: hookData.transcript_path ?? null,
+    agent: opts.agent ?? 'unknown',
     captured: false,
   };
   writeFileSync(
@@ -55,25 +64,26 @@ export async function runHookSessionEnd() {
   );
   saveCaptureState(now);
 
-  // Output message for Claude Code to show — prompts the agent to run session capture
-  // (only output if this appears to be an interactive session, not a sub-process)
-  if (numTurns >= config.capture_min_turns) {
+  if (opts.agent === 'codex') {
+    process.stdout.write(JSON.stringify({
+      continue: true,
+      systemMessage: 'cbrain queued this session for capture. Run cbrain-session-capture before ending if this session contains decisions or solved problems worth keeping.',
+    }));
+  } else if (numTurns >= config.capture_min_turns) {
     process.stdout.write('cbrain: Session queued for capture. Run /cbrain-session-capture to save this session to your brain.\n');
   }
 }
 
-export async function runHookFileWritten(filePath?: string) {
+export async function runHookFileWritten(filePath?: string, opts: { agent?: string } = {}) {
+  const hookData = filePath ? {} : await readHookJson();
   // Try to get file path from argument, env vars, or stdin JSON
-  const path = filePath
-    ?? process.env.TOOL_INPUT_FILE_PATH
-    ?? process.env.FILE_PATH
-    ?? (() => {
-      try {
-        const raw = readFileSync('/dev/stdin', 'utf8').trim();
-        if (raw.startsWith('{')) return JSON.parse(raw)?.tool_input?.file_path;
-      } catch { return undefined; }
-    })();
+  const candidates = getHookFileCandidates(filePath, hookData, opts.agent);
+  for (const path of candidates) {
+    await ingestFile(path);
+  }
+}
 
+async function ingestFile(path: string) {
   if (!path) return;
 
   const shouldIngest = INGEST_PATTERNS.some(pat => pat.test(path));
@@ -124,14 +134,36 @@ export async function runHookFileWritten(filePath?: string) {
   } catch { /* non-fatal */ }
 }
 
+function getHookFileCandidates(filePath: string | undefined, hookData: any, agent?: string): string[] {
+  const direct = filePath
+    ?? process.env.TOOL_INPUT_FILE_PATH
+    ?? process.env.FILE_PATH
+    ?? hookData?.tool_input?.file_path
+    ?? hookData?.tool_input?.path;
+
+  const paths = new Set<string>();
+  if (direct) paths.add(direct);
+
+  if (agent === 'codex') {
+    const command = hookData?.tool_input?.command ?? '';
+    for (const path of extractPatchPaths(command)) paths.add(path);
+  }
+
+  return Array.from(paths);
+}
+
 export function runHookListQueue(): void {
   if (!existsSync(SESSION_QUEUE_DIR)) { console.log('No pending sessions.'); return; }
   const files = readdirSync(SESSION_QUEUE_DIR).filter(f => f.endsWith('.json'));
   if (!files.length) { console.log('No pending sessions.'); return; }
+  let shown = 0;
   for (const f of files) {
     const entry = JSON.parse(readFileSync(join(SESSION_QUEUE_DIR, f), 'utf8'));
+    if (entry.captured) continue;
+    shown++;
     console.log(`${new Date(entry.timestamp).toISOString()}  turns:${entry.num_turns}  cwd:${entry.cwd}  captured:${entry.captured}`);
   }
+  if (!shown) console.log('No pending sessions.');
 }
 
 export function getPendingSessions(): any[] {
@@ -175,4 +207,39 @@ function inferSourceFromPath(filePath: string): string {
     }
   }
   return parts[parts.length - 2] || 'cbrain';
+}
+
+async function readHookJson(): Promise<any> {
+  try {
+    if (process.stdin.isTTY) return {};
+    const chunks: Buffer[] = [];
+    for await (const chunk of Bun.stdin.stream()) chunks.push(Buffer.from(chunk));
+    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function writeStopSuccess(agent?: string) {
+  if (agent === 'codex') process.stdout.write(JSON.stringify({ continue: true }));
+}
+
+function extractPatchPaths(command: string): string[] {
+  if (!command) return [];
+  const paths = new Set<string>();
+  const patterns = [
+    /^\*\*\* Update File: (.+)$/gm,
+    /^\*\*\* Add File: (.+)$/gm,
+    /^\*\*\* Delete File: (.+)$/gm,
+    /^\*\*\* Move to: (.+)$/gm,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(command))) {
+      paths.add(match[1].trim());
+    }
+  }
+  return Array.from(paths);
 }

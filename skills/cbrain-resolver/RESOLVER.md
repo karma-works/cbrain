@@ -10,10 +10,13 @@ description: cbrain skill dispatcher — maps trigger phrases to cbrain skills
 
 | Trigger phrase | Skill |
 |---------------|-------|
-| "gather requirements", "spec this out", "let's plan", "write requirements" | /cbrain-gather-requirements |
-| "session load", "load context", "pick up where", "what were we working on" | /cbrain-session-load |
-| "log this decision", "remember we decided", "save decision", "decision log" | /cbrain-decision-log |
-| "session capture", "capture this session", "save to brain", "what did we do" | /cbrain-session-capture |
+| "gather requirements", "spec this out", "let's plan", "write requirements" | cbrain-gather-requirements |
+| "session load", "load context", "pick up where", "what were we working on" | cbrain-session-load |
+| "log this decision", "remember we decided", "save decision", "decision log" | cbrain-decision-log |
+| "session capture", "capture this session", "save to brain", "what did we do" | cbrain-session-capture |
+
+Claude Code may invoke these as slash skills, for example `/cbrain-session-load`.
+Codex should invoke them by skill name or natural-language trigger.
 
 ## cbrain CLI Quick Reference
 

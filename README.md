@@ -1,8 +1,8 @@
 # cbrain
 
-Christian's Brain — a personal knowledge OS for Claude Code.
+Christian's Brain — a personal knowledge OS for agent coding sessions.
 
-Every Claude Code session starts amnesiac. cbrain fixes that. It accumulates decisions, working preferences, and domain knowledge across sessions in a queryable brain, and gives Claude Code skills that encode how you actually work — not just what you know.
+Every Claude Code or Codex session starts amnesiac. cbrain fixes that. It accumulates decisions, working preferences, and domain knowledge across sessions in a queryable brain, and gives agents shared skills that encode how you actually work — not just what you know.
 
 ---
 
@@ -13,7 +13,7 @@ Stop re-explaining yourself. Every significant decision you make, problem you so
 The brain gets smarter over time through two mechanisms:
 
 1. **Explicit capture** — skills like `/cbrain-gather-requirements` and `/cbrain-decision-log` write structured pages as a side effect of real work
-2. **Passive capture** — a Stop hook fires at session end and queues the session for capture; a PostToolUse hook auto-ingests specs, ADRs, and `CLAUDE.md` files as you write them
+2. **Passive capture** — a Stop hook fires at session end and queues the session for capture; a PostToolUse hook auto-ingests specs, ADRs, `CLAUDE.md`, and `AGENTS.md` files as you write them
 
 cbrain follows [gbrain](https://github.com/garrytan/gbrain)'s knowledge management approach — structured pages, typed entity links, hybrid search — but is independent: no Postgres, no MCP server process, no 30-minute install. One `.db` file.
 
@@ -34,7 +34,27 @@ cbrain init
 `cbrain init` will:
 - Create `~/.cbrain/brain.db` (your brain)
 - Write `~/.cbrain/config.json`
-- Add `Stop` and `PostToolUse` hooks to `~/.claude/settings.json` for passive capture
+- Install shared cbrain skills for Claude Code and Codex
+- Add Claude `Stop` and `PostToolUse` hooks to `~/.claude/settings.json` when that file exists
+- Add Codex `SessionStart`, `PostToolUse`, and `Stop` hooks to `~/.codex/hooks.json`
+- Add cbrain managed blocks to project-local `CLAUDE.md` and `AGENTS.md`
+
+Agent targeting:
+
+```bash
+cbrain init --agent all          # default: Claude Code + Codex
+cbrain init --agent claude       # Claude Code only
+cbrain init --agent codex        # Codex only
+cbrain init --link-skills        # symlink skills for local development
+cbrain init --skip-agent-setup   # initialize only ~/.cbrain
+```
+
+Uninstall agent integration without deleting brain data:
+
+```bash
+cbrain uninstall                 # remove cbrain skills, hooks, and managed instruction blocks
+cbrain uninstall --agent codex   # remove only Codex integration
+```
 
 **No `OPENAI_API_KEY`?** Use local Ollama instead:
 
@@ -45,13 +65,18 @@ cbrain init --embedding-provider ollama
 
 ### Install skills
 
-Copy the skills to your Claude Code skills directory:
+`cbrain init` installs skills automatically. The target paths are:
+
+- Claude Code: `~/.claude/skills/cbrain-*`
+- Codex: `~/.codex/skills/cbrain-*`
+- Shared agents path: `~/.agents/skills/cbrain-*`
+
+The repo also includes `install.sh`, which defaults to all supported agents:
 
 ```bash
-cp -r skills/cbrain-* ~/.claude/skills/
+./install.sh
+./install.sh --target codex --link-skills
 ```
-
-Skills are available immediately — no restart required.
 
 ---
 
@@ -89,14 +114,29 @@ cbrain backup
 
 ### Skills
 
-Invoke in Claude Code by typing the trigger phrase or `/skill-name`:
+Invoke by typing the trigger phrase or skill name. Claude Code also supports slash-style invocation.
 
 | Skill | Trigger | What it does |
 |-------|---------|--------------|
-| `/cbrain-gather-requirements` | "spec this out" | Full requirements session → specs/ + brain pages |
-| `/cbrain-session-load` | "load context" | Cold-start context restore from brain |
-| `/cbrain-decision-log` | "log this decision" | Write a structured decision page |
-| `/cbrain-session-capture` | "capture this session" | Extract and store session knowledge |
+| `cbrain-gather-requirements` | "spec this out" | Full requirements session → specs/ + brain pages |
+| `cbrain-session-load` | "load context" | Cold-start context restore from brain |
+| `cbrain-decision-log` | "log this decision" | Write a structured decision page |
+| `cbrain-session-capture` | "capture this session" | Extract and store session knowledge |
+
+Claude examples:
+
+```text
+/cbrain-session-load
+/cbrain-decision-log
+```
+
+Codex examples:
+
+```text
+use cbrain-session-load
+log this decision to cbrain
+capture this session to cbrain
+```
 
 ---
 
@@ -114,7 +154,7 @@ Invoke in Claude Code by typing the trigger phrase or `/skill-name`:
 | Embeddings | OpenAI `text-embedding-3-small` (default) or Ollama `nomic-embed-text` |
 | Entity extraction | Anthropic Haiku 4.5 (one call per page write) |
 | RAG query | Anthropic Haiku 4.5 (retrieval → LLM answer) |
-| Skills | Fat markdown files (`SKILL.md`) |
+| Skills | Shared fat markdown files (`SKILL.md`) installed for Claude Code and Codex |
 
 ### Brain file layout
 
@@ -127,7 +167,7 @@ Invoke in Claude Code by typing the trigger phrase or `/skill-name`:
   capture-state.json
 ```
 
-Skills install separately to `~/.claude/skills/cbrain-*/`.
+Skills install separately to agent skill directories: `~/.claude/skills/cbrain-*/`, `~/.codex/skills/cbrain-*/`, and `~/.agents/skills/cbrain-*/`.
 
 ### Page schema
 
@@ -167,15 +207,21 @@ At personal scale (<1,000 pages), loading all embeddings into memory for cosine 
 
 ### Passive capture
 
-Two Claude Code hooks fire automatically:
+Hooks fire automatically in supported agents:
 
-- **Stop hook** → `cbrain hook session-end`: debounced (30 min), checks turn count (≥5), writes a JSON entry to `~/.cbrain/session-queue/`. The next `/cbrain-session-load` invocation surfaces pending entries.
-- **PostToolUse hook (Write/Edit)** → `cbrain hook file-written`: checks the written file path against ingestion patterns (`specs/*.md`, `specs/ADR-*.md`, `CLAUDE.md`, `CHANGELOG.md`) and auto-ingests matches as brain pages.
+- **Claude Code Stop hook** → `cbrain hook session-end --agent claude`: debounced (30 min), checks turn count (≥5), writes a JSON entry to `~/.cbrain/session-queue/`.
+- **Claude Code PostToolUse hook (Write/Edit)** → `cbrain hook file-written --agent claude`: checks written file paths against ingestion patterns and auto-ingests matches.
+- **Codex SessionStart hook** → `cbrain hook session-start --agent codex`: injects a short reminder that cbrain memory is available.
+- **Codex PostToolUse hook (Edit/Write/apply_patch)** → `cbrain hook file-written --agent codex`: extracts changed paths from hook input and auto-ingests high-signal markdown files.
+- **Codex Stop hook** → `cbrain hook session-end --agent codex`: queues the session for capture and returns valid Codex hook JSON.
+
+The next `cbrain-session-load` invocation surfaces pending entries. `cbrain-session-capture` turns useful session knowledge into durable pages.
 
 ### Source tree
 
 ```
 src/
+  agents/             # Claude Code + Codex integration adapters
   cli.ts              # Commander-based CLI entry point
   types.ts            # Page, Link, SearchResult types
   config.ts           # ~/.cbrain/config.json management
@@ -194,9 +240,10 @@ src/
     backup.ts         # cbrain backup
     stats.ts          # cbrain stats
     hook.ts           # cbrain hook session-end / file-written
+    uninstall.ts      # Remove cbrain-managed agent integration
     re-embed.ts       # cbrain re-embed
 
-skills/              # Skill SKILL.md files (copy to ~/.claude/skills/)
+skills/              # Shared Skill SKILL.md files installed by cbrain init
   cbrain-gather-requirements/
   cbrain-session-load/
   cbrain-decision-log/

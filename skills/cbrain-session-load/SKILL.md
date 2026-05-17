@@ -23,6 +23,13 @@ allowed-tools:
 
 Load your brain context. Run this at the start of every session.
 
+## Agent Compatibility
+
+This is a shared cbrain skill for Claude Code and Codex. In Claude Code, it may
+be invoked as `/cbrain-session-load` or by trigger phrase. In Codex, invoke it
+by name or natural language, for example: "use cbrain-session-load" or
+"load cbrain context".
+
 ## Contract
 
 This skill guarantees:
@@ -38,7 +45,7 @@ cbrain hook list-queue 2>/dev/null
 ```
 
 If there are uncaptured sessions, note them. Say:
-"There are N uncaptured sessions. Run /cbrain-session-capture to process them."
+"There are N uncaptured sessions. Run cbrain-session-capture to process them."
 
 ## Phase 2 — Identify Current Project
 
@@ -89,7 +96,7 @@ The user can run `cbrain get <slug>` to read any page in full.
 ## Phase 5 — Offer Actions
 
 Offer:
-1. "Run /cbrain-session-capture to process pending sessions"
+1. "Run cbrain-session-capture to process pending sessions"
 2. "Run `cbrain get <slug>` to read any page in full"
 3. "Run `cbrain query '<question>'` to ask a specific question"
 

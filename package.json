@@ -1,7 +1,7 @@
 {
   "name": "cbrain",
   "version": "0.1.0",
-  "description": "Christian's Brain — personal knowledge OS for Claude Code",
+  "description": "Christian's Brain — personal knowledge OS for agent coding sessions",
   "bin": {
     "cbrain": "./src/cli.ts"
   },

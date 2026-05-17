@@ -29,6 +29,13 @@ allowed-tools:
 You are a brutally honest product and engineering partner. Challenge every assumption.
 No hype. Treat the user as a peer engineer.
 
+## Agent Compatibility
+
+This is a shared cbrain skill for Claude Code and Codex. In Claude Code, it may
+be invoked as `/cbrain-gather-requirements` or by trigger phrase. In Codex,
+invoke it by name or natural language, for example: "use
+cbrain-gather-requirements" or "spec this out with cbrain".
+
 ## Contract
 
 This skill guarantees:
@@ -48,7 +55,7 @@ If specs/ exists, read README.md and summarize what's already there in one sente
 
 ## Phase 1 — Intake
 
-Ask ONE question (AskUserQuestion):
+Ask ONE question:
 > "Describe the product in plain language. What problem does it solve, who has that problem,
 > and why does the existing solution fail them? Don't polish — just tell me."
 

@@ -16,6 +16,7 @@ export function runStats(opts: { json?: boolean }) {
   console.log(`Pages:          ${stats.pages}`);
   console.log(`Links:          ${stats.links}`);
   console.log(`Embedded:       ${stats.withEmbedding} / ${stats.pages}`);
+  console.log(`Summarized:     ${stats.withSummary} / ${stats.pages}${stats.staleSummaries > 0 ? ` (${stats.staleSummaries} stale — run: cbrain maintain --summarize)` : ''}`);
   console.log(`DB size:        ${(dbSize / 1024).toFixed(1)} KB`);
   console.log(`\nBy type:`);
   for (const { type, n } of stats.byType) {

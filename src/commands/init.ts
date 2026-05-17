@@ -1,15 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import {
   CBRAIN_DIR, DB_PATH, CONFIG_PATH, SESSION_QUEUE_DIR, BACKUPS_DIR,
   ensureDir, loadConfig, saveConfig, isCbrainInitialized,
 } from '../config.ts';
 import { getDb, closeDb } from '../db.ts';
+import { installAgents, normalizeTarget } from '../agents/index.ts';
 
-const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
-
-export async function runInit(opts: { yes?: boolean; embeddingProvider?: string }) {
+export async function runInit(opts: { yes?: boolean; embeddingProvider?: string; agent?: string; linkSkills?: boolean; skipAgentSetup?: boolean }) {
   const reinit = isCbrainInitialized();
   if (reinit) {
     console.log('cbrain already initialized. Running migrations and updating config...');
@@ -42,9 +38,19 @@ export async function runInit(opts: { yes?: boolean; embeddingProvider?: string 
     }
   }
 
-  // Configure Claude Code hooks
-  if (!reinit || opts.yes) {
-    configureHooks(opts.yes ?? false);
+  if (!opts.skipAgentSetup) {
+    const target = normalizeTarget(opts.agent);
+    const changes = installAgents({
+      target,
+      linkSkills: opts.linkSkills ?? false,
+      projectDir: process.cwd(),
+    });
+    if (changes.length) {
+      console.log('\nAgent integration updated:');
+      for (const change of changes) console.log(`  ${change}`);
+    } else {
+      console.log('\nAgent integration already up to date.');
+    }
   }
 
   const config = loadConfig();
@@ -56,65 +62,5 @@ export async function runInit(opts: { yes?: boolean; embeddingProvider?: string 
   console.log('\nNext steps:');
   console.log('  cbrain write <slug>        Write your first page');
   console.log('  cbrain search <query>      Search your brain');
-  console.log('  /cbrain-session-load       Load context at session start');
-}
-
-function configureHooks(skipPrompt: boolean) {
-  if (!existsSync(CLAUDE_SETTINGS_PATH)) {
-    console.log(`\nClaude Code settings not found at ${CLAUDE_SETTINGS_PATH}. Skipping hook setup.`);
-    return;
-  }
-
-  let settings: any = {};
-  try {
-    settings = JSON.parse(readFileSync(CLAUDE_SETTINGS_PATH, 'utf8'));
-  } catch {
-    console.log('Could not parse Claude Code settings. Skipping hook setup.');
-    return;
-  }
-
-  if (!settings.hooks) settings.hooks = {};
-
-  // Stop hook for session-end capture
-  const stopHook = { type: 'command', command: 'cbrain hook session-end' };
-  const postToolHook = { type: 'command', command: 'cbrain hook file-written' };
-
-  let changed = false;
-
-  // Add Stop hook
-  if (!settings.hooks.Stop) {
-    settings.hooks.Stop = [{ matcher: '', hooks: [stopHook] }];
-    changed = true;
-  } else {
-    const alreadyHas = settings.hooks.Stop.some((h: any) =>
-      h.hooks?.some((hh: any) => hh.command?.includes('cbrain hook session-end'))
-    );
-    if (!alreadyHas) {
-      settings.hooks.Stop[0].hooks = [...(settings.hooks.Stop[0].hooks ?? []), stopHook];
-      changed = true;
-    }
-  }
-
-  // Add PostToolUse hook for Write/Edit
-  if (!settings.hooks.PostToolUse) {
-    settings.hooks.PostToolUse = [{ matcher: 'Write|Edit', hooks: [postToolHook] }];
-    changed = true;
-  } else {
-    const alreadyHas = settings.hooks.PostToolUse.some((h: any) =>
-      h.hooks?.some((hh: any) => hh.command?.includes('cbrain hook file-written'))
-    );
-    if (!alreadyHas) {
-      settings.hooks.PostToolUse.push({ matcher: 'Write|Edit', hooks: [postToolHook] });
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2));
-    console.log('\nClaude Code hooks configured:');
-    console.log('  Stop hook → cbrain hook session-end (passive session capture)');
-    console.log('  PostToolUse hook → cbrain hook file-written (file event ingestion)');
-  } else {
-    console.log('\nClaude Code hooks already configured.');
-  }
+  console.log('  cbrain-session-load        Load context at session start');
 }

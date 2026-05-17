@@ -24,6 +24,13 @@ allowed-tools:
 
 Log a decision from the current session to the cbrain brain.
 
+## Agent Compatibility
+
+This is a shared cbrain skill for Claude Code and Codex. In Claude Code, it may
+be invoked as `/cbrain-decision-log` or by trigger phrase. In Codex, invoke it
+by name or natural language, for example: "use cbrain-decision-log" or
+"log this decision to cbrain".
+
 ## Contract
 
 This skill guarantees:

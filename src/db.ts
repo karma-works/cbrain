@@ -1,8 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { DB_PATH, ensureDir, CBRAIN_DIR } from './config.ts';
-import type { Page, Link } from './types.ts';
+import type { Page, Link, Summary } from './types.ts';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -19,12 +19,29 @@ CREATE TABLE IF NOT EXISTS pages (
   confidence TEXT NOT NULL DEFAULT 'medium',
   schema_version INTEGER NOT NULL DEFAULT 1,
   content TEXT NOT NULL DEFAULT '',
+  immutable INTEGER NOT NULL DEFAULT 0,
   embedding BLOB,
   embedding_provider TEXT,
   embedding_model TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS summaries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_slug TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'leaf',
+  level INTEGER NOT NULL DEFAULT 1,
+  content TEXT NOT NULL DEFAULT '',
+  token_count INTEGER NOT NULL DEFAULT 0,
+  parent_id INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (parent_id) REFERENCES summaries(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_page_kind ON summaries(page_slug, kind);
+CREATE INDEX IF NOT EXISTS idx_summaries_parent ON summaries(parent_id);
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_source ON pages(source);
@@ -82,8 +99,37 @@ export function getDb(): Database {
   const meta = _db.query('SELECT version FROM schema_meta LIMIT 1').get() as { version: number } | null;
   if (!meta) {
     _db.exec(`INSERT INTO schema_meta(version) VALUES (${SCHEMA_VERSION})`);
+  } else if (meta.version < SCHEMA_VERSION) {
+    runMigrations(_db, meta.version);
   }
   return _db;
+}
+
+function runMigrations(db: Database, fromVersion: number) {
+  if (fromVersion < 2) {
+    // v1 → v2: add immutable column to pages and create summaries table
+    const cols = db.query('PRAGMA table_info(pages)').all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'immutable')) {
+      db.exec('ALTER TABLE pages ADD COLUMN immutable INTEGER NOT NULL DEFAULT 0;');
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_slug TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'leaf',
+        level INTEGER NOT NULL DEFAULT 1,
+        content TEXT NOT NULL DEFAULT '',
+        token_count INTEGER NOT NULL DEFAULT 0,
+        parent_id INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (parent_id) REFERENCES summaries(id) ON DELETE SET NULL
+      );
+    `);
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_page_kind ON summaries(page_slug, kind);');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_summaries_parent ON summaries(parent_id);');
+    db.exec(`UPDATE schema_meta SET version = 2;`);
+  }
 }
 
 export function closeDb() {
@@ -103,17 +149,18 @@ export function upsertPage(page: Omit<Page, 'created_at' | 'updated_at'> & { cre
 
   db.query(`
     INSERT INTO pages (slug, title, type, source, date, tags, confidence, schema_version, content,
-      embedding, embedding_provider, embedding_model, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      immutable, embedding, embedding_provider, embedding_model, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(slug) DO UPDATE SET
       title=excluded.title, type=excluded.type, source=excluded.source, date=excluded.date,
       tags=excluded.tags, confidence=excluded.confidence, schema_version=excluded.schema_version,
-      content=excluded.content, embedding=excluded.embedding, embedding_provider=excluded.embedding_provider,
-      embedding_model=excluded.embedding_model, updated_at=excluded.updated_at
+      content=excluded.content, immutable=excluded.immutable, embedding=excluded.embedding,
+      embedding_provider=excluded.embedding_provider, embedding_model=excluded.embedding_model,
+      updated_at=excluded.updated_at
   `).run(
     page.slug, page.title, page.type, page.source, page.date,
     JSON.stringify(page.tags), page.confidence, page.schema_version ?? 1,
-    page.content, embeddingBlob,
+    page.content, page.immutable ? 1 : 0, embeddingBlob,
     page.embedding_provider ?? null, page.embedding_model ?? null,
     page.created_at ?? existing?.created_at ?? now, now
   );
@@ -161,11 +208,84 @@ function rowToPage(row: any): Page {
     confidence: row.confidence,
     schema_version: row.schema_version,
     content: row.content,
+    immutable: row.immutable === 1,
     embedding: row.embedding
       ? new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)
       : undefined,
     embedding_provider: row.embedding_provider ?? undefined,
     embedding_model: row.embedding_model ?? undefined,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// --- Summary CRUD ---
+
+export function upsertSummary(summary: Omit<Summary, 'id' | 'created_at' | 'updated_at'>): number {
+  const db = getDb();
+  const now = Date.now();
+  const existing = db.query('SELECT id, created_at FROM summaries WHERE page_slug = ? AND kind = ?')
+    .get(summary.page_slug, summary.kind) as { id: number; created_at: number } | null;
+
+  if (existing) {
+    db.query(`
+      UPDATE summaries SET level=?, content=?, token_count=?, parent_id=?, updated_at=?
+      WHERE id=?
+    `).run(summary.level, summary.content, summary.token_count, summary.parent_id ?? null, now, existing.id);
+    return existing.id;
+  } else {
+    const result = db.query(`
+      INSERT INTO summaries (page_slug, kind, level, content, token_count, parent_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      summary.page_slug, summary.kind, summary.level, summary.content,
+      summary.token_count, summary.parent_id ?? null, now, now
+    );
+    return result.lastInsertRowid as number;
+  }
+}
+
+export function getSummaryForSlug(slug: string, kind: 'leaf' | 'condensed' = 'leaf'): Summary | null {
+  const row = getDb()
+    .query('SELECT * FROM summaries WHERE page_slug = ? AND kind = ?')
+    .get(slug, kind) as any;
+  return row ? rowToSummary(row) : null;
+}
+
+export function getSummariesForSlugs(slugs: string[]): Map<string, Summary> {
+  if (!slugs.length) return new Map();
+  const db = getDb();
+  const placeholders = slugs.map(() => '?').join(',');
+  const rows = db.query(
+    `SELECT * FROM summaries WHERE page_slug IN (${placeholders}) AND kind = 'leaf'`
+  ).all(...slugs) as any[];
+  return new Map(rows.map(r => [r.page_slug, rowToSummary(r)]));
+}
+
+export function deleteSummariesForSlug(slug: string) {
+  getDb().query('DELETE FROM summaries WHERE page_slug = ?').run(slug);
+}
+
+export function getPagesNeedingSummary(): Page[] {
+  const db = getDb();
+  const rows = db.query(`
+    SELECT p.* FROM pages p
+    LEFT JOIN summaries s ON s.page_slug = p.slug AND s.kind = 'leaf'
+    WHERE s.id IS NULL OR s.updated_at < p.updated_at
+    ORDER BY p.updated_at DESC
+  `).all() as any[];
+  return rows.map(rowToPage);
+}
+
+function rowToSummary(row: any): Summary {
+  return {
+    id: row.id,
+    page_slug: row.page_slug,
+    kind: row.kind,
+    level: row.level,
+    content: row.content,
+    token_count: row.token_count,
+    parent_id: row.parent_id ?? undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -242,6 +362,12 @@ export function getStats() {
   const pages = (db.query('SELECT COUNT(*) as n FROM pages').get() as any).n as number;
   const links = (db.query('SELECT COUNT(*) as n FROM links').get() as any).n as number;
   const withEmbedding = (db.query('SELECT COUNT(*) as n FROM pages WHERE embedding IS NOT NULL').get() as any).n as number;
+  const withSummary = (db.query("SELECT COUNT(*) as n FROM summaries WHERE kind = 'leaf'").get() as any).n as number;
+  const staleSummaries = (db.query(`
+    SELECT COUNT(*) as n FROM pages p
+    LEFT JOIN summaries s ON s.page_slug = p.slug AND s.kind = 'leaf'
+    WHERE s.id IS NULL OR s.updated_at < p.updated_at
+  `).get() as any).n as number;
   const byType = db.query('SELECT type, COUNT(*) as n FROM pages GROUP BY type').all() as Array<{ type: string; n: number }>;
-  return { pages, links, withEmbedding, byType };
+  return { pages, links, withEmbedding, withSummary, staleSummaries, byType };
 }

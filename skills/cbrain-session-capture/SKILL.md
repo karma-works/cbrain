@@ -24,6 +24,13 @@ allowed-tools:
 
 Extract and store knowledge from the current session into cbrain.
 
+## Agent Compatibility
+
+This is a shared cbrain skill for Claude Code and Codex. In Claude Code, it may
+be invoked as `/cbrain-session-capture` or by trigger phrase. In Codex, invoke
+it by name or natural language, for example: "use cbrain-session-capture" or
+"capture this session to cbrain".
+
 ## Contract
 
 This skill guarantees:
@@ -167,7 +174,7 @@ remain as JSON files in `~/.cbrain/session-queue/` with `captured: true`.
 Tell the user:
 - N pages written (list slugs)
 - N pages skipped (too noisy or already existed)
-- Run `/cbrain-session-load` next session to retrieve this context
+- Run `cbrain-session-load` next session to retrieve this context
 
 ## Eval Criteria
 

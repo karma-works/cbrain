@@ -16,9 +16,24 @@ export interface PageFrontmatter {
 export interface Page extends PageFrontmatter {
   schema_version: number;
   content: string;
+  immutable?: boolean;
   embedding?: Float32Array;
   embedding_provider?: string;
   embedding_model?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export type SummaryKind = 'leaf' | 'condensed';
+
+export interface Summary {
+  id?: number;
+  page_slug: string;
+  kind: SummaryKind;
+  level: 1 | 2 | 3;
+  content: string;
+  token_count: number;
+  parent_id?: number;
   created_at: number;
   updated_at: number;
 }

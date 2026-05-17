@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import matter from 'gray-matter';
-import { upsertPage, getPage, upsertLink, deleteLinksFrom } from '../db.ts';
+import { upsertPage, getPage, upsertLink, deleteLinksFrom, deleteSummariesForSlug } from '../db.ts';
 import { embed } from '../embed.ts';
 import { extractLinks } from '../extract.ts';
 import { loadConfig } from '../config.ts';
@@ -74,6 +74,9 @@ export async function runWrite(slug: string, opts: WriteOptions) {
     embedding_provider: embedding ? config.embedding_provider : undefined,
     embedding_model: embedding ? config.embedding_model : undefined,
   });
+
+  // Invalidate stale leaf summary so next maintain --summarize regenerates it
+  deleteSummariesForSlug(effectiveSlug);
 
   // Entity extraction
   if (!opts.noExtract && content) {

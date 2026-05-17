@@ -1,8 +1,8 @@
 # cbrain — Christian's Brain: Spec Index
 
-Personal knowledge OS for Christian. A collection of Claude Code skills backed by a lightweight brain engine (SQLite + vector search + typed entity graph) that accumulates cognitive capital across sessions.
+Personal knowledge OS for Christian. A collection of shared Claude Code and Codex skills backed by a lightweight brain engine (SQLite + vector search + typed entity graph) that accumulates cognitive capital across sessions.
 
-**The core problem it solves:** Every Claude Code session starts amnesiac. cbrain gives the agent persistent, queryable access to Christian's decisions, preferences, and domain knowledge — without re-explanation.
+**The core problem it solves:** Every Claude Code or Codex session starts amnesiac. cbrain gives the agent persistent, queryable access to Christian's decisions, preferences, and domain knowledge — without re-explanation.
 
 ---
 
@@ -35,7 +35,7 @@ Personal knowledge OS for Christian. A collection of Claude Code skills backed b
 - **SQLite over PGLite/Postgres**: Single portable `.db` file; FTS5 + sqlite-vec covers all retrieval needs at personal scale.
 - **LLM extraction over code-based**: One Haiku call per page write extracts typed entity links; more flexible than regex-based extraction at the cost of ~$0.30/month.
 - **`~/.cbrain/` as global namespace**: Brain is project-agnostic; source field scopes pages per project.
-- **Fat markdown skills**: Same format as gbrain/gstack; portable across agent platforms.
+- **Fat markdown skills**: Same source skills install to Claude Code and Codex skill directories.
 - **CLI-first, MCP deferred**: `cbrain` CLI is the interface; MCP server is post-MVP.
 - **First skill is requirements-gathering**: This spec was produced by cbrain's own first skill.
 - **Passive capture in Phase 0, not post-MVP**: Claude Code's Stop hook fires `cbrain-session-capture` at session end automatically; PostToolUse hook auto-ingests written specs and ADRs. No manual trigger required for baseline memory accumulation.

@@ -6,18 +6,37 @@ const program = new Command();
 
 program
   .name('cbrain')
-  .description("Christian's Brain — personal knowledge OS")
+  .description("Christian's Brain — personal knowledge OS for agent coding sessions")
   .version('0.1.0');
 
 // init
 program
   .command('init')
-  .description('Initialize cbrain (creates ~/.cbrain/, configures hooks)')
+  .description('Initialize cbrain (creates ~/.cbrain/, installs agent skills and hooks)')
   .option('--embedding-provider <provider>', 'openai or ollama')
+  .option('--agent <agent>', 'all, claude, or codex', 'all')
+  .option('--link-skills', 'symlink skills instead of copying them')
+  .option('--skip-agent-setup', 'only initialize ~/.cbrain, do not install skills/hooks')
   .option('-y, --yes', 'skip prompts')
   .action(async (opts) => {
     const { runInit } = await import('./commands/init.ts');
-    await runInit({ yes: opts.yes, embeddingProvider: opts.embeddingProvider });
+    await runInit({
+      yes: opts.yes,
+      embeddingProvider: opts.embeddingProvider,
+      agent: opts.agent,
+      linkSkills: opts.linkSkills,
+      skipAgentSetup: opts.skipAgentSetup,
+    });
+  });
+
+program
+  .command('uninstall')
+  .description('Remove cbrain agent skills, hooks, and managed instruction blocks')
+  .option('--agent <agent>', 'all, claude, or codex', 'all')
+  .option('--json', 'JSON output')
+  .action(async (opts) => {
+    const { runUninstall } = await import('./commands/uninstall.ts');
+    await runUninstall(opts);
   });
 
 // write
@@ -93,10 +112,11 @@ program
   .command('maintain')
   .description('Run brain health checks (stale, orphans, dead links, duplicates)')
   .option('--json', 'JSON output')
+  .option('--summarize', 'generate/refresh LLM summaries for pages missing or stale summaries')
   .action(async (opts) => {
     requireInit();
     const { runMaintain } = await import('./commands/maintain.ts');
-    runMaintain(opts);
+    await runMaintain(opts);
   });
 
 // backup
@@ -132,23 +152,34 @@ program
   });
 
 // hook
-const hookCmd = program.command('hook').description('Internal hook handlers (called by Claude Code hooks)');
+const hookCmd = program.command('hook').description('Internal hook handlers (called by agent hooks)');
 
 hookCmd
   .command('session-end')
   .description('Handle Stop hook — queue session for capture')
-  .action(async () => {
+  .option('--agent <agent>', 'claude or codex')
+  .action(async (opts) => {
     const { runHookSessionEnd } = await import('./commands/hook.ts');
-    await runHookSessionEnd();
+    await runHookSessionEnd(opts);
+  });
+
+hookCmd
+  .command('session-start')
+  .description('Handle session start hook — add cbrain context reminder')
+  .option('--agent <agent>', 'codex')
+  .action(async (opts) => {
+    const { runHookSessionStart } = await import('./commands/hook.ts');
+    await runHookSessionStart(opts);
   });
 
 hookCmd
   .command('file-written [path]')
   .description('Handle PostToolUse Write/Edit hook — auto-ingest high-signal files')
-  .action(async (path) => {
+  .option('--agent <agent>', 'claude or codex')
+  .action(async (path, opts) => {
     if (!isCbrainInitialized()) return;
     const { runHookFileWritten } = await import('./commands/hook.ts');
-    await runHookFileWritten(path);
+    await runHookFileWritten(path, opts);
   });
 
 hookCmd
